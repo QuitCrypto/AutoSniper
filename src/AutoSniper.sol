@@ -18,7 +18,12 @@ error OrderFailed();
 error TipBelowMinimum();
 error CallerNotFulfiller();
 
+/// @title AutoSniper for oSnipe
+/// @author 0xQuit
+
 contract AutoSniper is Ownable {
+    event SnipeSuccessful(address nftContractAddress, uint256 tokenId, address sniper);
+
     address private OSNIPE = 0x507c8252c764489Dc1150135CA7e41b01e10ee74;
     address private FULFILLER_ADDRESS;
     uint256 public minimumTip = 0.005 ether;
@@ -26,10 +31,24 @@ contract AutoSniper is Ownable {
     mapping(address => uint256) public sniperBalances;
     mapping(address => SniperGuardrails) public sniperGuardrails;
 
+    /**
+    ** @param _fulfiller This address is controlled by the oSnipe discord bot,
+    ** and is responsible for fulfilling orders. Only the fulfiller can call `fulfillOrder`.
+    */
     constructor(address _fulfiller) { 
         FULFILLER_ADDRESS = _fulfiller;
     }
 
+    /**
+    ** @notice fulfillOrder conducts its own checks to ensure that the passed order is a valid sniper
+    ** before forwarding the snipe on to the appropriate marketplace. Snipers can block orders by setting
+    ** up guardrails that prevent orders from being fulfilled outside of allowlisted marketplaces or
+    ** nft contracts, or with tips that exceed a maximum tip amount. WETH is used to subsidize
+    ** the order in case the Sniper's deposited balance is too low. WETH must be approved in order for this to
+    ** work. Calculation is done off-chain and passed in via wethAmount.
+    **
+    ** @param wethAmount the amount of WETH that needs to be converted.
+    */
     function fulfillOrder(SniperOrder calldata order, uint256 wethAmount) external onlyFulfiller {
         if (wethAmount > 0) _swapWeth(wethAmount, order.to);
         _checkSniperGuardrails(order.tokenAddress, order.marketplace, order.tip, order.to);
@@ -46,12 +65,28 @@ contract AutoSniper is Ownable {
         if (!success) revert OrderFailed();
 
         _transferNftToSniper(order.tokenType, order.tokenAddress, order.tokenId, order.to);
+        emit SnipeSuccessful(order.tokenAddress, order.tokenId, order.to);
     }
 
-    function deposit(address sniper) external payable {
+    /**
+    ** @notice deposit Ether into the contract. 
+    ** @param sniper is the address who's balance is affected.
+    */
+    function deposit(address sniper) public payable {
         sniperBalances[sniper] += msg.value;
     }
 
+    /**
+    ** @notice deposit Ether into your own contract balance.
+    */
+    function depositSelf() external payable {
+        deposit(msg.sender);
+    }
+
+    /**
+    ** @notice withdraw Ether from your contract balance
+    ** @param amount the amount of Ether to be withdrawn 
+    */
     function withdraw(uint256 amount) external {
         if (sniperBalances[msg.sender] < amount) revert InsufficientBalance();
         unchecked { sniperBalances[msg.sender] -= amount; }
@@ -59,6 +94,11 @@ contract AutoSniper is Ownable {
         if (!success) revert FailedToWithdraw();
     }
 
+    /**
+    ** @notice set up a marketplace allowlist.
+    ** @param guardEnabled if false then marketplace allowlist will not be checked for this user
+    ** @param marketplaceAllowed boolean indicating whether the marketplace is allowed or not
+    */
     function setUserAllowedMarketplaces(bool guardEnabled, bool marketplaceAllowed, address[] calldata marketplaces) external {
         sniperGuardrails[msg.sender].marketplaceGuardEnabled = guardEnabled;
         for (uint256 i = 0; i < marketplaces.length;) {
@@ -67,11 +107,19 @@ contract AutoSniper is Ownable {
         }
     }
 
+    /**
+    ** @notice Set up a maximum tip guardrail (in wei). If set to 0, guardrail will be disabled.
+    */
     function setUserMaxTip(uint256 maxTipInWei) external {
         if (maxTipInWei < minimumTip && maxTipInWei != 0) revert TipBelowMinimum();
         sniperGuardrails[msg.sender].maxTip = maxTipInWei;
     }
 
+    /**
+    ** @notice set up NFT contract allowlist
+    ** @param guardEnabled if false then NFT contract allowlist will not be checked for this user
+    ** @param nftAllowed boolean indicating whether the NFT contract is allowed or not
+    */
     function setUserAllowedNfts(bool guardEnabled, bool nftAllowed, address[] calldata nfts) external {
         sniperGuardrails[msg.sender].nftContractGuardEnabled = guardEnabled;
         for (uint256 i = 0; i < nfts.length;) {
@@ -80,14 +128,24 @@ contract AutoSniper is Ownable {
         }
     }
 
+    /**
+    ** @notice Owner function to set up global marketplace allowlist.
+    */
     function configureMarket(address marketplace, bool status) external onlyOwner {
         allowedMarketplaces[marketplace] = status;
     }
 
+    /**
+    ** @notice Owner function to change fulfiller address if needed.
+    */
     function setFulfillerAddress(address _fulfiller) external onlyOwner {
         FULFILLER_ADDRESS = _fulfiller;
     }
 
+    /**
+    ** @notice Owner function to change minimum tip amount (minimum tip should
+    ** always be approximately enough to cover gas, which is paid by the fulfiller)
+    */
     function setMinimumTip(uint256 tip) external onlyOwner {
         minimumTip = tip;
     }
