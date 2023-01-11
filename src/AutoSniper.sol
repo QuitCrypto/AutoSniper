@@ -24,7 +24,6 @@ error CallerNotFulfiller();
 contract AutoSniper is Ownable {
     event SnipeSuccessful(address nftContractAddress, uint256 tokenId, address sniper);
 
-    address private OSNIPE = 0x507c8252c764489Dc1150135CA7e41b01e10ee74;
     address private FULFILLER_ADDRESS;
     uint256 public minimumTip = 0.005 ether;
     mapping(address => bool) public allowedMarketplaces;
@@ -45,8 +44,8 @@ contract AutoSniper is Ownable {
     ** up guardrails that prevent orders from being fulfilled outside of allowlisted marketplaces or
     ** nft contracts, or with tips that exceed a maximum tip amount. WETH is used to subsidize
     ** the order in case the Sniper's deposited balance is too low. WETH must be approved in order for this to
-    ** work. Calculation is done off-chain and passed in via wethAmount.
-    **
+    ** work. Calculation is done off-chain and passed in via wethAmount. If for some reason there is an overpay,
+    ** the marketplace will refund the difference, which is added to the Sniper's balance.
     ** @param wethAmount the amount of WETH that needs to be converted.
     */
     function fulfillOrder(SniperOrder calldata order, uint256 wethAmount) external onlyFulfiller {
@@ -56,13 +55,17 @@ contract AutoSniper is Ownable {
         if (!allowedMarketplaces[order.marketplace]) revert MarketplaceNotAllowed();
         if (sniperBalances[order.to] < totalValue) revert InsufficientBalance();
 
-        unchecked { sniperBalances[order.to] -= totalValue; }
+        uint256 balanceBefore = address(this).balance;
 
-        (bool transferred, ) = payable(OSNIPE).call{value: order.tip}("");
+        (bool transferred, ) = payable(FULFILLER_ADDRESS).call{value: order.tip}("");
         if (!transferred) revert FailedToWithdraw();
-
         (bool success,) = order.marketplace.call{value: order.value}(order.data);
         if (!success) revert OrderFailed();
+
+        uint256 balanceAfter = address(this).balance;
+        uint256 spent = balanceBefore - balanceAfter;
+
+        unchecked { sniperBalances[order.to] -= spent; }
 
         _transferNftToSniper(order.tokenType, order.tokenAddress, order.tokenId, order.to);
         emit SnipeSuccessful(order.tokenAddress, order.tokenId, order.to);
@@ -237,9 +240,9 @@ contract AutoSniper is Ownable {
 
     // Emergency function: In case any ERC20 tokens get stuck in the contract unintentionally
     // Only owner can retrieve the asset balance to a recipient address
-    function rescueERC20(address asset, address recipient) onlyOwner external { 
-        (bool success, ) = asset.call(abi.encodeWithSelector(0xa9059cbb, recipient, IERC20(asset).balanceOf(address(this))));
-        if (!success) revert FailedToWithdraw();
+    function rescueERC20(address asset, address recipient) onlyOwner external {
+        IERC20 token = IERC20(asset);
+        token.transfer(recipient, token.balanceOf(address(this)));
     }
 
     // Emergency function: In case any ERC721 tokens get stuck in the contract unintentionally
