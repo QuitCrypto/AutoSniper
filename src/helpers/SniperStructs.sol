@@ -19,8 +19,8 @@ struct SniperOrder {
 struct Claim {
     ItemType tokenType;
     address tokenAddress;
+    uint256 tokenId;
     bytes claimData;
-    bytes transferData;
 }
 
 struct SniperGuardrails {

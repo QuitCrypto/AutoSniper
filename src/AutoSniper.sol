@@ -26,18 +26,23 @@ error ArrayLengthMismatch();
 /// @author 0xQuit
 
 contract AutoSniper is Ownable {
-    event SnipeSuccessful(
-        address indexed nftContractAddress,
-        uint256 indexed tokenId,
-        address indexed sniper,
-        address marketplace,
-        uint256 price,
-        uint256 autosniperTip,
-        uint256 validatorTip
+    event Snipe(
+        SniperOrder order,
+        Claim[] claims
     );
 
+    event Deposit(
+        address sniper,
+        uint256 amount
+    );
+
+    event Withdrawal(
+        address sniper,
+        uint256 amount
+    );
+
+    address private immutable WETH_ADDRESS;
     address private fulfillerAddress;
-    address private wethAddress;
     uint256 public minimumTip = 0.005 ether;
     mapping(address => bool) public allowedMarketplaces;
     mapping(address => uint256) public sniperBalances;
@@ -97,6 +102,8 @@ contract AutoSniper is Ownable {
     */
     function deposit(address sniper) public payable {
         sniperBalances[sniper] += msg.value;
+
+        emit Deposit(sniper, msg.value);
     }
 
     /**
@@ -115,6 +122,8 @@ contract AutoSniper is Ownable {
         sniperBalances[msg.sender] -= amount;
         (bool success, ) = payable(msg.sender).call{value: amount}("");
         if (!success) revert FailedToWithdraw();
+
+        emit Withdrawal(msg.sender, amount);
     }
 
     /**
@@ -154,11 +163,9 @@ contract AutoSniper is Ownable {
     /**
     * @dev Owner function to set up global marketplace allowlist.
     */
-    function configureMarkets(address[] calldata marketplaces, bool[] calldata statuses) external onlyOwner {
-        if (marketplaces.length != statuses.length) revert ArrayLengthMismatch();
-
+    function configureMarkets(address[] calldata marketplaces, bool status) external onlyOwner {
         for (uint256 i = 0; i < marketplaces.length;) {
-            allowedMarketplaces[marketplaces[i]] = statuses[i];
+            allowedMarketplaces[marketplaces[i]] = status;
 
             unchecked { ++i; }
         }
@@ -190,7 +197,7 @@ contract AutoSniper is Ownable {
 
     // internal helpers
     function _swapWeth(uint256 wethAmount, address sniper) private onlyFulfiller {
-        IWETH weth = IWETH(wethAddress);
+        IWETH weth = IWETH(WETH_ADDRESS);
         weth.transferFrom(sniper, address(this), wethAmount);
         weth.withdraw(wethAmount);
 
@@ -210,13 +217,14 @@ contract AutoSniper is Ownable {
         }
     }
 
-    function _claimAndTransferClaimableAssets(Claim[] calldata claims) private {
+    function _claimAndTransferClaimableAssets(Claim[] calldata claims, address sniper) private {
         for (uint256 i = 0; i < claims.length; i++) {
             Claim memory claim = claims[i];
 
             (bool claimSuccess, ) = claim.tokenAddress.call(claim.claimData);
-            (bool transferSuccess, ) = claim.tokenAddress.call(claim.transferData);
-            if (!claimSuccess || !transferSuccess) revert ClaimFailed();
+            if (!claimSuccess) revert ClaimFailed();
+
+            _transferNftToSniper(claim.tokenType, claim.tokenAddress, claim.tokenId, sniper);
         }
     }
 
