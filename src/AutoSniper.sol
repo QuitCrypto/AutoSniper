@@ -21,6 +21,7 @@ error TipBelowMinimum();
 error CallerNotFulfiller();
 error ClaimFailed();
 error ArrayLengthMismatch();
+error MigrationNotEnabled();
 
 /// @title AutoSniper for oSnipe
 /// @author 0xQuit
@@ -43,6 +44,8 @@ contract AutoSniper is Ownable {
 
     address private immutable WETH_ADDRESS;
     address private fulfillerAddress;
+    address public nextContractVersionAddress;
+    bool public migrationEnabled;
     uint256 public minimumTip = 0.005 ether;
     mapping(address => bool) public allowedMarketplaces;
     mapping(address => uint256) public sniperBalances;
@@ -55,7 +58,7 @@ contract AutoSniper is Ownable {
     */
     constructor(address _fulfiller, address _weth) { 
         fulfillerAddress = _fulfiller;
-        wethAddress = _weth;
+        WETH_ADDRESS = _weth;
     }
 
     /**
@@ -67,14 +70,13 @@ contract AutoSniper is Ownable {
     * work. Calculation is done off-chain and passed in via wethAmount. If for some reason there is an overpay,
     * the marketplace will refund the difference, which is added to the Sniper's balance.
     * @param wethSubsidy the amount of WETH that needs to be converted.
-    * @param claims an array of claims that the sniped NFT is eligible for. Claims should be claimed and
-    * transferred to the sniper
+    * @param claims an array of claims that the sniped NFT is eligible for. Claims are claimed and
+    * transferred to the sniper along with the sniped NFT.
     */
     function fulfillOrder(SniperOrder calldata order, Claim[] calldata claims, uint256 wethSubsidy) external onlyFulfiller {
-        if (wethSubsidy > 0) _swapWeth(wethSubsidy, order.to);
-        _checkSniperGuardrails(order.tokenAddress, order.marketplace, order.autosniperTip, order.to);
+        _checkGuardrails(order.tokenAddress, order.marketplace, order.autosniperTip, order.to);
         uint256 totalValue = order.value + order.autosniperTip + order.validatorTip;
-        if (!allowedMarketplaces[order.marketplace]) revert MarketplaceNotAllowed();
+        if (wethSubsidy > 0) _swapWeth(wethSubsidy, order.to);
         if (sniperBalances[order.to] < totalValue) revert InsufficientBalance();
 
         uint256 balanceBefore = address(this).balance;
@@ -91,9 +93,54 @@ contract AutoSniper is Ownable {
 
         sniperBalances[order.to] -= spent;
 
-        _claimAndTransferClaimableAssets(claims);
-        _transferNftToSniper(order.tokenType, order.tokenAddress, order.tokenId, order.to);
-        emit SnipeSuccessful(order.tokenAddress, order.tokenId, order.to, order.marketplace, order.value, order.autosniperTip, order.validatorTip);
+        _claimAndTransferClaimableAssets(claims, order.to);
+        _transferNftToSniper(order.tokenType, order.tokenAddress, order.tokenId, address(this), order.to);
+        emit Snipe(order, claims);
+    }
+
+    /**
+    * @dev fulfillNonCompliantMarketplaceOrder is a variant on fulfillOrder, used for markets that
+    * don't allow purchases through contracts. The fulfiller EOA will fulfill the order, and then use
+    * this function to get it to the sniper.
+    * @param wethSubsidy the amount of WETH that needs to be converted.
+    * @param claims an array of claims that the sniped NFT is eligible for. Claims are claimed and
+    * transferred to the sniper along with the sniped NFT.
+    */
+    function fulfillNonCompliantMarketplaceOrder(SniperOrder calldata order, Claim[] calldata claims, uint256 wethSubsidy) external onlyFulfiller {
+        _checkGuardrails(order.tokenAddress, order.marketplace, order.autosniperTip, order.to);
+        uint256 totalValue = order.value + order.autosniperTip + order.validatorTip;
+        if (wethSubsidy > 0) _swapWeth(wethSubsidy, order.to);
+        if (sniperBalances[order.to] < totalValue) revert InsufficientBalance();
+
+        uint256 balanceBefore = address(this).balance;
+
+        (bool autosniperPaid, ) = payable(fulfillerAddress).call{value: order.autosniperTip + order.value}("");
+        if (!autosniperPaid) revert FailedToPayAutosniper();
+        (bool validatorPaid, ) = block.coinbase.call{value: order.validatorTip}("");
+        if (!validatorPaid) revert FailedToPayValidator();
+
+        uint256 balanceAfter = address(this).balance;
+        uint256 spent = balanceBefore - balanceAfter;
+
+        sniperBalances[order.to] -= spent;
+
+        _transferNftToSniper(order.tokenType, order.tokenAddress, order.tokenId, fulfillerAddress, order.to);
+
+        emit Snipe(order, claims);
+    }
+
+    /**
+    * @dev In cases where we execute a snipe without using this contract, use this function as a solution to
+    * bypass priority fee by tipping the coinbase directly, and emit Snipe event for logging purposes.
+    * @param order this order contains a validator tip which is paid out, and is emitted in the Snipe event
+    * @param claims these claims are unused, but are included in the event and should reflect the claims executed
+    * as part of the snipe prior to calling this function.
+    */
+    function sendDirectTipToCoinbase(SniperOrder calldata order, Claim[] calldata claims) external payable onlyFulfiller {
+        (bool validatorPaid, ) = block.coinbase.call{value: order.validatorTip}("");
+        if (!validatorPaid) revert FailedToPayValidator();
+
+        emit Snipe(order, claims);
     }
 
     /**
@@ -179,6 +226,15 @@ contract AutoSniper is Ownable {
     }
 
     /**
+    * Enables migration and sets a destination address (the new contract)
+    * @param _destination the new AutoSniper version to allow migration to.
+    */
+    function setMigrationAddress(address _destination) external onlyOwner {
+        migrationEnabled = true;
+        nextContractVersionAddress = _destination;
+    }
+
+    /**
     * @dev Owner function to change minimum tip amount (minimum tip should
     * always be approximately enough to cover gas, which is paid by the fulfiller)
     */
@@ -195,6 +251,21 @@ contract AutoSniper is Ownable {
         return sniperGuardrails[sniper].allowedNftContracts[nftContract];
     }
 
+    /**
+    * @dev in the event of a future contract upgrade, this function allows snipers to
+    * easily move their ether balance to the new contract. This can only be called by
+    * the sniper to move their personal balance - the contract owner or anybody else
+    * does not have the power to migrate balances for users.
+    */
+    function migrateBalance() external {
+        if (!migrationEnabled) revert MigrationNotEnabled();
+        uint256 balanceToMigrate = sniperBalances[msg.sender];
+        sniperBalances[msg.sender] = 0;
+
+        (bool success, ) = nextContractVersionAddress.call{value: balanceToMigrate}(abi.encodeWithSelector(this.deposit.selector, msg.sender));
+        if (!success) revert FailedToWithdraw();
+    }
+
     // internal helpers
     function _swapWeth(uint256 wethAmount, address sniper) private onlyFulfiller {
         IWETH weth = IWETH(WETH_ADDRESS);
@@ -204,16 +275,16 @@ contract AutoSniper is Ownable {
         unchecked { sniperBalances[sniper] += wethAmount; }
     }
 
-    function _transferNftToSniper(ItemType tokenType, address tokenAddress, uint256 tokenId, address sniper) private {
+    function _transferNftToSniper(ItemType tokenType, address tokenAddress, uint256 tokenId, address source, address sniper) private {
         if (tokenType == ItemType.ERC721) {
-            IERC721(tokenAddress).transferFrom(address(this), sniper, tokenId);
+            IERC721(tokenAddress).transferFrom(source, sniper, tokenId);
         } else if (tokenType == ItemType.ERC1155) {
-            IERC1155(tokenAddress).safeTransferFrom(address(this), sniper, tokenId, 1, "");
+            IERC1155(tokenAddress).safeTransferFrom(source, sniper, tokenId, 1, "");
         } else if (tokenType == ItemType.CRYPTOPUNKS) {
             IPunk(tokenAddress).transferPunk(sniper, tokenId);
         } else if (tokenType == ItemType.ERC20) {
             IERC20 token = IERC20(tokenAddress);
-            token.transfer(sniper, token.balanceOf(address(this)));
+            token.transfer(sniper, token.balanceOf(source));
         }
     }
 
@@ -224,13 +295,14 @@ contract AutoSniper is Ownable {
             (bool claimSuccess, ) = claim.tokenAddress.call(claim.claimData);
             if (!claimSuccess) revert ClaimFailed();
 
-            _transferNftToSniper(claim.tokenType, claim.tokenAddress, claim.tokenId, sniper);
+            _transferNftToSniper(claim.tokenType, claim.tokenAddress, claim.tokenId, address(this), sniper);
         }
     }
 
-    function _checkSniperGuardrails(address tokenAddress, address marketplace, uint256 tip, address sniper) private view {
+    function _checkGuardrails(address tokenAddress, address marketplace, uint256 tip, address sniper) private view {
         SniperGuardrails storage guardrails = sniperGuardrails[sniper];
 
+        if (!allowedMarketplaces[marketplace]) revert MarketplaceNotAllowed();
         if (guardrails.maxTip > 0 && tip > guardrails.maxTip) revert MaxTipExceeded();
         if (guardrails.marketplaceGuardEnabled && !guardrails.allowedMarketplaces[marketplace]) revert MarketplaceNotAllowed();
         if (guardrails.nftContractGuardEnabled && !guardrails.allowedNftContracts[tokenAddress]) revert TokenContractNotAllowed();
