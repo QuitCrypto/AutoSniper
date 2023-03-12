@@ -5,7 +5,7 @@ import "./helpers/SniperStructs.sol";
 import "./helpers/IWETH.sol";
 import "./helpers/IPunk.sol";
 import "./helpers/SniperErrors.sol";
-import "openzeppelin/contracts/access/Ownable.sol";
+import "solmate/src/auth/Owned.sol";
 import "openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "openzeppelin/contracts/token/ERC1155/IERC1155.sol";
@@ -65,7 +65,7 @@ import "openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
 */
 
-contract AutoSniper is Ownable {
+contract AutoSniper is Owned {
     event Snipe(
         SniperOrder order,
         Claim[] claims
@@ -91,6 +91,7 @@ contract AutoSniper is Ownable {
     mapping(address => uint256) public sniperBalances;
     mapping(address => SniperGuardrails) public sniperGuardrails;
 
+    constructor() Owned(0x507c8252c764489Dc1150135CA7e41b01e10ee74) {}
 
     /**
     * @dev fulfillOrder conducts its own checks to ensure that the passed order is a valid sniper
