@@ -4,27 +4,66 @@ pragma solidity ^0.8.18;
 import "./helpers/SniperStructs.sol";
 import "./helpers/IWETH.sol";
 import "./helpers/IPunk.sol";
+import "./helpers/SniperErrors.sol";
 import "openzeppelin/contracts/access/Ownable.sol";
 import "openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
-error InsufficientBalance();
-error FailedToWithdraw();
-error FailedToPayAutosniper();
-error FailedToPayValidator();
-error MaxTipExceeded();
-error MarketplaceNotAllowed();
-error TokenContractNotAllowed();
-error OrderFailed();
-error TipBelowMinimum();
-error CallerNotFulfiller();
-error ClaimFailed();
-error ArrayLengthMismatch();
-error MigrationNotEnabled();
+/**
+ * @title AutoSniper 2.0 for @oSnipeNFT
+ * @author 0xQuit
+ */
 
-/// @title AutoSniper for oSnipe
-/// @author 0xQuit
+/*
+
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@%*+=--::::::--=+*#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@*=:.       ......        :=*%@@@@@@@@@%@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@#=.    .-+*%@@@@@@@@@@@@%#+=:    -@@@@@@=:::=#@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@%+.   :=#@@@@@@@@@@@@@@@@@@@@@@@@#+#@@@@@%**+-:::-%@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@#-   :+%@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@%******+-::=@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@%:   =%@@@@@@@@@@@@@@@@%%%%@@@@@@@@@@@@@@%*++++++***+=+@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@=   -@@@@@@@@@@@@#+-:.         :-+%@@@@@%*+++++++++*#@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@#.  :%@@@@@@@@@%+:      ..:::::.  .*@@@%*+++++++++++#@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@*   =@@@@@@@@@#:    .=*%@@@@@@@@@@%@@@%+----======+#@@@@@%@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@+   *@@@@@@@@#:   .+%@@@@@@@@@@@@@@@@@@=-------==+#@@@@@%- -@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@#   #@@@@@@@@=   .*@@@@@@@@@#=.    .-+#+=--------*@@@@@@@%   +@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@.  =@@@@@@@@-   =@@@@@@@@@@:  -+**+-   .--=----+%@@@@@@@@@#   %@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@+  .@@@@@@@@-   +@@@@@@@@@@-  #@@@@%+-:.  :=*@#%@@@*%@@@@@@@=  -@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@.  #@@@@@@@+   =@@@@@@@@@@@:  @@@%=-----.  #@@@@@*. -@@@@@@@@   %@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@#   @@@@@@@@.  .@@@@@@@@@@@@%  :#=:::::--*+=@@@@@@-   %@@@@@@@-  +@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@+  :@@@@@@@%   =@@@@@@@@@@@@@%-:--::::-*@@@@@@@@@@*   *@@@@@@@+  :@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@=  -@@@@@@@#   +@@@@@@@@@@@@@#-:---:-*@@@@@@@@@@@@#   +@@@@@@@+  :@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@+  -@@@@@@@%   =@@@@@@*#@@@#-::---=. -@@@@@@@@@@@@*   +@@@@@@@+  :@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@#  .@@@@@@@@   .@@@@@+  #*-:::--*@@#  -@@@@@@@@@@@-   %@@@@@@@-  =@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@   #@@@@@@@+  =@@@@@%  .--:--+@@@@@=  %@@@@@@@@@#   :@@@@@@@@   %@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@=  :@@@@@@@@=%@@@@@@*:   :-*@@@@@@%. .@@@@@@@@@%    %@@@@@@@=  :@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@   +@@@@@@@@@@@@#+---:.  .=*###*-  :%@@@@@@@@#   .%@@@@@@@#   #@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@*   %@@@@@@@@@#=------*%+-      .-#@@@@@@@@%=   .%@@@@@@@@.  =@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@= .*@@@@@@@@+------=%@@@@@@%%%@@@@@@@@@@#-    +@@@@@@@@@:  :@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@#@@@@@@@@*===---=#@@@@@@@@@@@@@@@@@%*-     +@@@@@@@@@#   -@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@*=====+#%@@@@@%= .:--==--:.     .-*@@@@@@@@@@+   +@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@+--==+#@@@@@@@@=:.           :=*%@@@@@@@@@@@*.  .#@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@*===+-*@@@@@@@@@@@@@@%%#####%@@@@@@@@@@@@@@@*.   +@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@#+==#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@#=   .+@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@+==+%@@@@@@@@@%*%@@@@@@@@@@@@@@@@@@@@@@@@@*-    -*@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@#=%@@@@@@@@@+    -=*%@@@@@@@@@@@@@@%*+-.    :+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@%+-.      ..:::::::.      .-+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@%*+=-:........:-=+*#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+*/
 
 contract AutoSniper is Ownable {
     event Snipe(
@@ -42,24 +81,16 @@ contract AutoSniper is Ownable {
         uint256 amount
     );
 
-    address private immutable WETH_ADDRESS;
-    address private fulfillerAddress;
+    string public constant name = "oSnipe: AutoSniper V2";
+
+    address private constant WETH_ADDRESS = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address private fulfillerAddress = 0x816B65bd147df5C2566d2C9828815E85ff6055c6;
     address public nextContractVersionAddress;
     bool public migrationEnabled;
-    uint256 public minimumTip = 0.005 ether;
     mapping(address => bool) public allowedMarketplaces;
     mapping(address => uint256) public sniperBalances;
     mapping(address => SniperGuardrails) public sniperGuardrails;
 
-
-    /**
-    * @param _fulfiller This address is controlled by the oSnipe discord bot,
-    * and is responsible for fulfilling orders. Only the fulfiller can call `fulfillOrder`.
-    */
-    constructor(address _fulfiller, address _weth) { 
-        fulfillerAddress = _fulfiller;
-        WETH_ADDRESS = _weth;
-    }
 
     /**
     * @dev fulfillOrder conducts its own checks to ensure that the passed order is a valid sniper
@@ -130,6 +161,39 @@ contract AutoSniper is Ownable {
     }
 
     /**
+    * @dev solSnatch is a pure arbitrage function for fulfilling an order, and accepting a WETH offer in the same transaction.
+    * Contract balance can be used, but user balances cannot be affected - the call will revert if the post-call contract
+    * balance is lower than the pre-call balance.
+    * @param contractAddresses a list of contract addresses that will be called
+    * @param calls a matching array to contractAddresses, each index being a call to make to a given contract
+    * @param validatorTip the amount to send to block.coinbase. Reverts if this is 0.
+    */
+    function solSnatch(address[] calldata contractAddresses, bytes[] calldata calls, uint256[] calldata values, address sniper, uint256 validatorTip, uint256 fulfillerTip) external onlyFulfiller {
+        if (contractAddresses.length != calls.length) revert ArrayLengthMismatch();
+        if (calls.length != values.length) revert ArrayLengthMismatch();
+        uint256 balanceBefore = address(this).balance;
+
+        for (uint256 i = 0; i < contractAddresses.length;) {
+            (bool success, ) = contractAddresses[i].call{value: values[i]}(calls[i]);
+            if (!success) revert OrderFailed();
+
+            unchecked { ++i; }
+        }
+
+        (bool validatorPaid, ) = block.coinbase.call{value: validatorTip}("");
+        if (!validatorPaid) revert FailedToPayValidator();
+        (bool fulfillerPaid, ) = fulfillerAddress.call{value: fulfillerTip}("");
+        if (!fulfillerPaid) revert FailedToPayAutosniper();
+
+        uint256 balanceAfter = address(this).balance;
+
+        if (balanceAfter <= balanceBefore) revert NoMoneyMoProblems();
+        sniperBalances[sniper] += balanceAfter - balanceBefore;
+
+        emit Deposit(sniper, balanceAfter - balanceBefore);
+    }
+
+    /**
     * @dev In cases where we execute a snipe without using this contract, use this function as a solution to
     * bypass priority fee by tipping the coinbase directly, and emit Snipe event for logging purposes.
     * @param order this order contains a validator tip which is paid out, and is emitted in the Snipe event
@@ -190,7 +254,6 @@ contract AutoSniper is Ownable {
     * @dev Set up a maximum tip guardrail (in wei). If set to 0, guardrail will be disabled.
     */
     function setUserMaxTip(uint256 maxTipInWei) external {
-        if (maxTipInWei < minimumTip && maxTipInWei != 0) revert TipBelowMinimum();
         sniperGuardrails[msg.sender].maxTip = maxTipInWei;
     }
 
@@ -232,14 +295,6 @@ contract AutoSniper is Ownable {
     function setMigrationAddress(address _destination) external onlyOwner {
         migrationEnabled = true;
         nextContractVersionAddress = _destination;
-    }
-
-    /**
-    * @dev Owner function to change minimum tip amount (minimum tip should
-    * always be approximately enough to cover gas, which is paid by the fulfiller)
-    */
-    function setMinimumTip(uint256 tip) external onlyOwner {
-        minimumTip = tip;
     }
 
     // getters to simplify web3js calls
