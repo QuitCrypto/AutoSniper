@@ -14,3 +14,5 @@ error ClaimFailed();
 error MigrationNotEnabled();
 error ArrayLengthMismatch();
 error NoMoneyMoProblems();
+error SniperIsPaused();
+error FulfillerCannotHaveBalance();

@@ -11,7 +11,7 @@ import "openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
 /**
- * @title AutoSniper 2.0 for @oSnipeNFT
+ * @title AutoSniper 3.0 for @oSnipeNFT
  * @author 0xQuit
  */
 
@@ -66,11 +66,6 @@ import "openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 */
 
 contract AutoSniper is Owned {
-    event Snipe(
-        SniperOrder order,
-        Claim[] claims
-    );
-
     event Deposit(
         address sniper,
         uint256 amount
@@ -81,10 +76,10 @@ contract AutoSniper is Owned {
         uint256 amount
     );
 
-    string public constant name = "oSnipe: AutoSniper V2";
+    string public constant name = "oSnipe: AutoSniper V3";
 
     address private constant WETH_ADDRESS = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address private fulfillerAddress = 0x816B65bd147df5C2566d2C9828815E85ff6055c6;
+    address private fulfillerAddress = 0x7D79Bd0E4B3dC90665A3ed30Aa6C6c06c89D224E;
     address public nextContractVersionAddress;
     bool public migrationEnabled;
     mapping(address => bool) public allowedMarketplaces;
@@ -123,11 +118,10 @@ contract AutoSniper is Owned {
         uint256 balanceAfter = address(this).balance;
         uint256 spent = balanceBefore - balanceAfter;
 
-        sniperBalances[order.to] -= spent;
+        unchecked { sniperBalances[order.to] -= spent; }
 
         _claimAndTransferClaimableAssets(claims, order.to);
         _transferNftToSniper(order.tokenType, order.tokenAddress, order.tokenId, address(this), order.to);
-        emit Snipe(order, claims);
     }
 
     /**
@@ -154,11 +148,10 @@ contract AutoSniper is Owned {
         uint256 balanceAfter = address(this).balance;
         uint256 spent = balanceBefore - balanceAfter;
 
-        sniperBalances[order.to] -= spent;
+        unchecked { sniperBalances[order.to] -= spent; }
 
+        _claimAndTransferClaimableAssets(claims, order.to);
         _transferNftToSniper(order.tokenType, order.tokenAddress, order.tokenId, fulfillerAddress, order.to);
-
-        emit Snipe(order, claims);
     }
 
     /**
@@ -189,23 +182,18 @@ contract AutoSniper is Owned {
         uint256 balanceAfter = address(this).balance;
 
         if (balanceAfter <= balanceBefore) revert NoMoneyMoProblems();
-        sniperBalances[sniper] += balanceAfter - balanceBefore;
+        unchecked { sniperBalances[sniper] += balanceAfter - balanceBefore; }
 
         emit Deposit(sniper, balanceAfter - balanceBefore);
     }
 
     /**
     * @dev In cases where we execute a snipe without using this contract, use this function as a solution to
-    * bypass priority fee by tipping the coinbase directly, and emit Snipe event for logging purposes.
-    * @param order this order contains a validator tip which is paid out, and is emitted in the Snipe event
-    * @param claims these claims are unused, but are included in the event and should reflect the claims executed
-    * as part of the snipe prior to calling this function.
+    * bypass priority fee by tipping the coinbase directly.
     */
-    function sendDirectTipToCoinbase(SniperOrder calldata order, Claim[] calldata claims) external payable onlyFulfiller {
-        (bool validatorPaid, ) = block.coinbase.call{value: order.validatorTip}("");
+    function sendDirectTipToCoinbase() external payable onlyFulfiller {
+        (bool validatorPaid, ) = block.coinbase.call{value: msg.value}("");
         if (!validatorPaid) revert FailedToPayValidator();
-
-        emit Snipe(order, claims);
     }
 
     /**
@@ -213,7 +201,8 @@ contract AutoSniper is Owned {
     * @param sniper is the address who's balance is affected.
     */
     function deposit(address sniper) public payable {
-        sniperBalances[sniper] += msg.value;
+        if (tx.origin == fulfillerAddress) revert FulfillerCannotHaveBalance();
+        unchecked { sniperBalances[sniper] += msg.value; }
 
         emit Deposit(sniper, msg.value);
     }
@@ -230,8 +219,9 @@ contract AutoSniper is Owned {
     * @param amount the amount of Ether to be withdrawn 
     */
     function withdraw(uint256 amount) external {
+        if (tx.origin == fulfillerAddress) revert FulfillerCannotHaveBalance();
         if (sniperBalances[msg.sender] < amount) revert InsufficientBalance();
-        sniperBalances[msg.sender] -= amount;
+        unchecked { sniperBalances[msg.sender] -= amount; }
         (bool success, ) = payable(msg.sender).call{value: amount}("");
         if (!success) revert FailedToWithdraw();
 
@@ -254,7 +244,7 @@ contract AutoSniper is Owned {
     /**
     * @dev Set up a maximum tip guardrail (in wei). If set to 0, guardrail will be disabled.
     */
-    function setUserMaxTip(uint256 maxTipInWei) external {
+    function setUserMaxTip(uint72 maxTipInWei) external {
         sniperGuardrails[msg.sender].maxTip = maxTipInWei;
     }
 
@@ -269,6 +259,10 @@ contract AutoSniper is Owned {
             sniperGuardrails[msg.sender].allowedNftContracts[nfts[i]] = nftAllowed;
             unchecked { ++i; }
         }
+    }
+
+    function setUserIsPaused(bool isPaused) external {
+        sniperGuardrails[msg.sender].isPaused = isPaused;
     }
 
     /**
@@ -323,7 +317,7 @@ contract AutoSniper is Owned {
     }
 
     // internal helpers
-    function _swapWeth(uint256 wethAmount, address sniper) private onlyFulfiller {
+    function _swapWeth(uint256 wethAmount, address sniper) private {
         IWETH weth = IWETH(WETH_ADDRESS);
         weth.transferFrom(sniper, address(this), wethAmount);
         weth.withdraw(wethAmount);
@@ -358,6 +352,7 @@ contract AutoSniper is Owned {
     function _checkGuardrails(address tokenAddress, address marketplace, uint256 tip, address sniper) private view {
         SniperGuardrails storage guardrails = sniperGuardrails[sniper];
 
+        if (guardrails.isPaused) revert SniperIsPaused();
         if (!allowedMarketplaces[marketplace]) revert MarketplaceNotAllowed();
         if (guardrails.maxTip > 0 && tip > guardrails.maxTip) revert MaxTipExceeded();
         if (guardrails.marketplaceGuardEnabled && !guardrails.allowedMarketplaces[marketplace]) revert MarketplaceNotAllowed();

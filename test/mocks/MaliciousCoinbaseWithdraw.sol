@@ -7,7 +7,7 @@ interface IAutoSniper {
   function sniperBalances(address) external view returns (uint256);
 }
 
-contract MaliciousCoinbase {
+contract MaliciousCoinbaseWithdraw {
   constructor() {}
 
   address autoSniper;

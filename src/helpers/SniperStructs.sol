@@ -5,15 +5,15 @@ pragma solidity 0.8.18;
 import "./SniperEnums.sol";
 
 struct SniperOrder {
+    ItemType tokenType;
+    uint72 value;
+    uint72 autosniperTip;
+    uint72 validatorTip;
     address to;
     address marketplace;
-    uint256 value;
-    uint256 autosniperTip;
-    uint256 validatorTip;
-    ItemType tokenType;
-    bytes data;
     address tokenAddress;
     uint256 tokenId;
+    bytes data;
 }
 
 struct Claim {
@@ -26,7 +26,8 @@ struct Claim {
 struct SniperGuardrails {
     bool marketplaceGuardEnabled;
     bool nftContractGuardEnabled;
+    bool isPaused;
+    uint72 maxTip;
     mapping(address => bool) allowedMarketplaces;
     mapping(address => bool) allowedNftContracts;
-    uint256 maxTip;
 }
