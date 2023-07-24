@@ -1,3 +1,9 @@
 {
-  "solidity.compileUsingRemoteVersion": "v0.8.18+commit.87f61d96"
+  "editor.formatOnSave": true,
+  "solidity.formatter": "prettier",
+  "solidity.defaultCompiler": "localFile",
+  "solidity.compileUsingRemoteVersion": "v0.8.19+commit.87f61d96",
+  // "solidity.packageDefaultDependenciesContractsDirectory": "src",
+  // "solidity.packageDefaultDependenciesDirectory": "lib",
+  "git.ignoreLimitWarning": true
 }

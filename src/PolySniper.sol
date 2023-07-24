@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.19;
+pragma solidity 0.8.19;
 
 import "./helpers/SniperStructs.sol";
 import "./helpers/IWETH.sol";
 import "./helpers/IPunk.sol";
 import "./helpers/SniperErrors.sol";
 import "solmate/src/auth/Owned.sol";
+import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
+import "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
 import "openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "openzeppelin/contracts/token/ERC1155/IERC1155.sol";
@@ -66,74 +68,102 @@ import "openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 */
 
 contract AutoSniper is Owned {
-    event Deposit(address sniper, uint256 amount);
+    ISwapRouter public immutable swapRouter;
 
-    event Withdrawal(address sniper, uint256 amount);
+    string public name = "oSnipe: AutoSniper V3";
 
-    string public constant name = "oSnipe: AutoSniper V3";
+    address constant _WETH_ADDRESS = 0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619;
+    address constant _WMATIC_ADDRESS =
+        0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
+    address constant _SWAP_ROUTER_ADDRESS =
+        0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    uint24 constant _POOL_FEE = 3000;
 
-    address private constant WETH_ADDRESS =
-        0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address private fulfillerAddress =
-        0x7D79Bd0E4B3dC90665A3ed30Aa6C6c06c89D224E;
-    address public nextContractVersionAddress;
-    bool public migrationEnabled;
+    address _fulfillerAddress = 0x7D79Bd0E4B3dC90665A3ed30Aa6C6c06c89D224E;
     mapping(address => bool) public allowedMarketplaces;
-    mapping(address => uint256) public sniperBalances;
     mapping(address => SniperGuardrails) public sniperGuardrails;
 
-    constructor() Owned(0x507c8252c764489Dc1150135CA7e41b01e10ee74) {}
+    constructor() Owned(0x507c8252c764489Dc1150135CA7e41b01e10ee74) {
+        swapRouter = ISwapRouter(_SWAP_ROUTER_ADDRESS);
+    }
 
     /**
-     * @dev fulfillOrder conducts its own checks to ensure that the passed order is a valid sniper
+     * @dev fulfillOrderWithTokenAsk conducts its own checks to ensure that the passed order is a valid sniper
      * before forwarding the snipe on to the appropriate marketplace. Snipers can block orders by setting
      * up guardrails that prevent orders from being fulfilled outside of allowlisted marketplaces or
      * nft contracts, or with tips that exceed a maximum tip amount. WETH is used to subsidize
      * the order in case the Sniper's deposited balance is too low. WETH must be approved in order for this to
      * work. Calculation is done off-chain and passed in via wethAmount. If for some reason there is an overpay,
      * the marketplace will refund the difference, which is added to the Sniper's balance.
-     * @param wethSubsidy the amount of WETH that needs to be converted.
      * @param claims an array of claims that the sniped NFT is eligible for. Claims are claimed and
      * transferred to the sniper along with the sniped NFT.
      */
-    function fulfillOrder(
+    function fulfillOrderWithTokenAsk(
         SniperOrder calldata order,
         Claim[] calldata claims,
-        uint256 wethSubsidy
+        TokenSubsidy calldata tokenSubsidy
     ) external onlyFulfiller {
-        _checkGuardrails(
-            order.tokenAddress,
-            order.marketplace,
-            order.autosniperTip,
-            order.to
-        );
-        uint256 totalValue = order.value +
-            order.autosniperTip +
-            order.validatorTip;
-        if (wethSubsidy > 0) _swapWeth(wethSubsidy, order.to);
-        if (sniperBalances[order.to] < totalValue) revert InsufficientBalance();
+        _checkGuardrails(order.tokenAddress, order.marketplace, order.to);
 
-        uint256 balanceBefore = address(this).balance;
+        // transfer `amount` of `token` to autosniper:
+        _depositToken(tokenSubsidy, order.to);
 
-        (bool autosniperPaid, ) = payable(fulfillerAddress).call{
+        bool orderFilled;
+
+        if (order.paymentToken == address(0)) {
+            uint256 totalValue = order.value +
+                order.autosniperTip +
+                order.validatorTip;
+            // swap `token` for wmatic (enough for totalValue)
+            _swapExactOutputSingle(
+                _WMATIC_ADDRESS,
+                tokenSubsidy.tokenAddress,
+                totalValue,
+                tokenSubsidy.amountToSwapForTips +
+                    tokenSubsidy.amountToSwapForOrder,
+                order.to
+            );
+
+            // withdraw wmatic for matic
+            IWETH(_WMATIC_ADDRESS).withdraw(totalValue);
+
+            (orderFilled, ) = order.marketplace.call{value: order.value}(
+                order.data
+            );
+        } else {
+            uint256 totalTip = order.autosniperTip + order.validatorTip;
+            // swap `token` for matic (enough for totalTip)
+            _swapExactOutputSingle(
+                _WMATIC_ADDRESS,
+                tokenSubsidy.tokenAddress,
+                totalTip,
+                tokenSubsidy.amountToSwapForTips,
+                order.to
+            );
+            IWETH(_WMATIC_ADDRESS).withdraw(totalTip);
+
+            // swap `token` for `order.paymentToken` (enough for order.value)
+            _swapExactOutputSingle(
+                order.paymentToken,
+                tokenSubsidy.tokenAddress,
+                order.value,
+                tokenSubsidy.amountToSwapForOrder,
+                order.to
+            );
+            IERC20(order.paymentToken).approve(order.marketplace, order.value);
+            (orderFilled, ) = order.marketplace.call(order.data);
+        }
+        if (!orderFilled) revert OrderFailed();
+
+        (bool autosniperPaid, ) = payable(_fulfillerAddress).call{
             value: order.autosniperTip
         }("");
         if (!autosniperPaid) revert FailedToPayAutosniper();
-        (bool orderFilled, ) = order.marketplace.call{value: order.value}(
-            order.data
-        );
-        if (!orderFilled) revert OrderFailed();
+
         (bool validatorPaid, ) = block.coinbase.call{value: order.validatorTip}(
             ""
         );
         if (!validatorPaid) revert FailedToPayValidator();
-
-        uint256 balanceAfter = address(this).balance;
-        uint256 spent = balanceBefore - balanceAfter;
-
-        unchecked {
-            sniperBalances[order.to] -= spent;
-        }
 
         _claimAndTransferClaimableAssets(claims, order.to);
         _transferNftToSniper(
@@ -143,151 +173,6 @@ contract AutoSniper is Owned {
             address(this),
             order.to
         );
-    }
-
-    /**
-     * @dev fulfillNonCompliantMarketplaceOrder is a variant on fulfillOrder, used for markets that
-     * don't allow purchases through contracts. The fulfiller EOA will fulfill the order, and then use
-     * this function to get it to the sniper.
-     * @param wethSubsidy the amount of WETH that needs to be converted.
-     * @param claims an array of claims that the sniped NFT is eligible for. Claims are claimed and
-     * transferred to the sniper along with the sniped NFT.
-     */
-    function fulfillNonCompliantMarketplaceOrder(
-        SniperOrder calldata order,
-        Claim[] calldata claims,
-        uint256 wethSubsidy
-    ) external onlyFulfiller {
-        _checkGuardrails(
-            order.tokenAddress,
-            order.marketplace,
-            order.autosniperTip,
-            order.to
-        );
-        uint256 totalValue = order.value +
-            order.autosniperTip +
-            order.validatorTip;
-        if (wethSubsidy > 0) _swapWeth(wethSubsidy, order.to);
-        if (sniperBalances[order.to] < totalValue) revert InsufficientBalance();
-
-        uint256 balanceBefore = address(this).balance;
-
-        (bool autosniperPaid, ) = payable(fulfillerAddress).call{
-            value: order.autosniperTip + order.value
-        }("");
-        if (!autosniperPaid) revert FailedToPayAutosniper();
-        (bool validatorPaid, ) = block.coinbase.call{value: order.validatorTip}(
-            ""
-        );
-        if (!validatorPaid) revert FailedToPayValidator();
-
-        uint256 balanceAfter = address(this).balance;
-        uint256 spent = balanceBefore - balanceAfter;
-
-        unchecked {
-            sniperBalances[order.to] -= spent;
-        }
-
-        _claimAndTransferClaimableAssets(claims, order.to);
-        _transferNftToSniper(
-            order.tokenType,
-            order.tokenAddress,
-            order.tokenId,
-            fulfillerAddress,
-            order.to
-        );
-    }
-
-    /**
-     * @dev solSnatch is a pure arbitrage function for fulfilling an order, and accepting a WETH offer in the same transaction.
-     * Contract balance can be used, but user balances cannot be affected - the call will revert if the post-call contract
-     * balance is lower than the pre-call balance.
-     * @param contractAddresses a list of contract addresses that will be called
-     * @param calls a matching array to contractAddresses, each index being a call to make to a given contract
-     * @param validatorTip the amount to send to block.coinbase. Reverts if this is 0.
-     */
-    function solSnatch(
-        address[] calldata contractAddresses,
-        bytes[] calldata calls,
-        uint256[] calldata values,
-        address sniper,
-        uint256 validatorTip,
-        uint256 fulfillerTip
-    ) external onlyFulfiller {
-        if (contractAddresses.length != calls.length)
-            revert ArrayLengthMismatch();
-        if (calls.length != values.length) revert ArrayLengthMismatch();
-        uint256 balanceBefore = address(this).balance;
-
-        for (uint256 i = 0; i < contractAddresses.length; ) {
-            (bool success, ) = contractAddresses[i].call{value: values[i]}(
-                calls[i]
-            );
-            if (!success) revert OrderFailed();
-
-            unchecked {
-                ++i;
-            }
-        }
-
-        (bool validatorPaid, ) = block.coinbase.call{value: validatorTip}("");
-        if (!validatorPaid) revert FailedToPayValidator();
-        (bool fulfillerPaid, ) = fulfillerAddress.call{value: fulfillerTip}("");
-        if (!fulfillerPaid) revert FailedToPayAutosniper();
-
-        uint256 balanceAfter = address(this).balance;
-
-        if (balanceAfter <= balanceBefore) revert NoMoneyMoProblems();
-        unchecked {
-            sniperBalances[sniper] += balanceAfter - balanceBefore;
-        }
-
-        emit Deposit(sniper, balanceAfter - balanceBefore);
-    }
-
-    /**
-     * @dev In cases where we execute a snipe without using this contract, use this function as a solution to
-     * bypass priority fee by tipping the coinbase directly.
-     */
-    function sendDirectTipToCoinbase() external payable onlyFulfiller {
-        (bool validatorPaid, ) = block.coinbase.call{value: msg.value}("");
-        if (!validatorPaid) revert FailedToPayValidator();
-    }
-
-    /**
-     * @dev deposit Ether into the contract.
-     * @param sniper is the address who's balance is affected.
-     */
-    function deposit(address sniper) public payable {
-        if (tx.origin == fulfillerAddress) revert FulfillerCannotHaveBalance();
-        unchecked {
-            sniperBalances[sniper] += msg.value;
-        }
-
-        emit Deposit(sniper, msg.value);
-    }
-
-    /**
-     * @dev deposit Ether into your own contract balance.
-     */
-    function depositSelf() external payable {
-        deposit(msg.sender);
-    }
-
-    /**
-     * @dev withdraw Ether from your contract balance
-     * @param amount the amount of Ether to be withdrawn
-     */
-    function withdraw(uint256 amount) external {
-        if (tx.origin == fulfillerAddress) revert FulfillerCannotHaveBalance();
-        if (sniperBalances[msg.sender] < amount) revert InsufficientBalance();
-        unchecked {
-            sniperBalances[msg.sender] -= amount;
-        }
-        (bool success, ) = payable(msg.sender).call{value: amount}("");
-        if (!success) revert FailedToWithdraw();
-
-        emit Withdrawal(msg.sender, amount);
     }
 
     /**
@@ -355,17 +240,8 @@ contract AutoSniper is Owned {
     /**
      * @dev Owner function to change fulfiller address if needed.
      */
-    function setFulfillerAddress(address _fulfiller) external onlyOwner {
-        fulfillerAddress = _fulfiller;
-    }
-
-    /**
-     * Enables migration and sets a destination address (the new contract)
-     * @param _destination the new AutoSniper version to allow migration to.
-     */
-    function setMigrationAddress(address _destination) external onlyOwner {
-        migrationEnabled = true;
-        nextContractVersionAddress = _destination;
+    function setfulfillerAddress(address _fulfiller) external onlyOwner {
+        _fulfillerAddress = _fulfiller;
     }
 
     // getters to simplify web3js calls
@@ -383,32 +259,16 @@ contract AutoSniper is Owned {
         return sniperGuardrails[sniper].allowedNftContracts[nftContract];
     }
 
-    /**
-     * @dev in the event of a future contract upgrade, this function allows snipers to
-     * easily move their ether balance to the new contract. This can only be called by
-     * the sniper to move their personal balance - the contract owner or anybody else
-     * does not have the power to migrate balances for users.
-     */
-    function migrateBalance() external {
-        if (!migrationEnabled) revert MigrationNotEnabled();
-        uint256 balanceToMigrate = sniperBalances[msg.sender];
-        sniperBalances[msg.sender] = 0;
-
-        (bool success, ) = nextContractVersionAddress.call{
-            value: balanceToMigrate
-        }(abi.encodeWithSelector(this.deposit.selector, msg.sender));
-        if (!success) revert FailedToWithdraw();
-    }
-
-    // internal helpers
-    function _swapWeth(uint256 wethAmount, address sniper) private {
-        IWETH weth = IWETH(WETH_ADDRESS);
-        weth.transferFrom(sniper, address(this), wethAmount);
-        weth.withdraw(wethAmount);
-
-        unchecked {
-            sniperBalances[sniper] += wethAmount;
-        }
+    function _depositToken(
+        TokenSubsidy calldata subsidy,
+        address sniper
+    ) private {
+        IERC20 token = IERC20(subsidy.tokenAddress);
+        token.transferFrom(
+            sniper,
+            address(this),
+            subsidy.amountToSwapForTips + subsidy.amountToSwapForOrder
+        );
     }
 
     function _transferNftToSniper(
@@ -456,10 +316,56 @@ contract AutoSniper is Owned {
         }
     }
 
+    /// @notice swapExactOutputSingle swaps a minimum possible amount of tokenIn for a fixed amount of WETH.
+    /// @dev The calling address must approve this contract to spend its tokenIn for this function to succeed. As the amount of input tokenIn is variable,
+    /// the calling address will need to approve for a slightly higher amount, anticipating some variance.
+    /// @param amountOut The exact amount of tokenOut to receive from the swap.
+    /// @param amountInMaximum The amount of tokenIn we are willing to spend to receive the specified amount of tokenOut.
+    /// @return amountIn The amount of tokenIn actually spent in the swap.
+    function _swapExactOutputSingle(
+        address tokenOut,
+        address tokenIn,
+        uint256 amountOut,
+        uint256 amountInMaximum,
+        address sniper
+    ) private returns (uint256 amountIn) {
+        if (tokenOut == tokenIn) return amountInMaximum;
+        // Approve the router to spend the specifed `amountInMaximum` of `tokenIn`.
+        TransferHelper.safeApprove(
+            tokenIn,
+            address(swapRouter),
+            amountInMaximum
+        );
+
+        ISwapRouter.ExactOutputSingleParams memory params = ISwapRouter
+            .ExactOutputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                fee: _POOL_FEE,
+                recipient: address(this),
+                deadline: block.timestamp,
+                amountOut: amountOut,
+                amountInMaximum: amountInMaximum,
+                sqrtPriceLimitX96: 0
+            });
+
+        // Executes the swap returning the amountIn needed to spend to receive the desired amountOut.
+        amountIn = swapRouter.exactOutputSingle(params);
+
+        // If the actual amount spent (amountIn) is less than the specified maximum amount, refund the msg.sender and approve the swapRouter to spend 0.
+        if (amountIn < amountInMaximum) {
+            TransferHelper.safeApprove(tokenIn, address(swapRouter), 0);
+            TransferHelper.safeTransfer(
+                tokenIn,
+                sniper,
+                amountInMaximum - amountIn
+            );
+        }
+    }
+
     function _checkGuardrails(
         address tokenAddress,
         address marketplace,
-        uint256 tip,
         address sniper
     ) private view {
         SniperGuardrails storage guardrails = sniperGuardrails[sniper];
@@ -561,7 +467,7 @@ contract AutoSniper is Owned {
     }
 
     modifier onlyFulfiller() {
-        if (msg.sender != fulfillerAddress) revert CallerNotFulfiller();
+        if (msg.sender != _fulfillerAddress) revert CallerNotFulfiller();
         _;
     }
 }

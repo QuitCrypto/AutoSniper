@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 
-pragma solidity 0.8.18;
+pragma solidity 0.8.19;
 
 import "./SniperEnums.sol";
 
@@ -9,6 +9,7 @@ struct SniperOrder {
     uint72 value;
     uint72 autosniperTip;
     uint72 validatorTip;
+    address paymentToken;
     address to;
     address marketplace;
     address tokenAddress;
@@ -27,7 +28,12 @@ struct SniperGuardrails {
     bool marketplaceGuardEnabled;
     bool nftContractGuardEnabled;
     bool isPaused;
-    uint72 maxTip;
     mapping(address => bool) allowedMarketplaces;
     mapping(address => bool) allowedNftContracts;
+}
+
+struct TokenSubsidy {
+    address tokenAddress;
+    uint128 amountToSwapForOrder;
+    uint128 amountToSwapForTips;
 }
