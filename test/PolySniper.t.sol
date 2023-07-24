@@ -10,6 +10,9 @@ import "./mocks/weth.sol";
 import {MaliciousCoinbaseWithdraw} from "./mocks/MaliciousCoinbaseWithdraw.sol";
 import {MaliciousCoinbaseDeposit} from "./mocks/MaliciousCoinbaseDeposit.sol";
 
+// 0x00000000000000000000000000000000000000007ebf7a2044551601e0ffce4c
+// init code: 0xa22e87072fe505f08197c007d7b319a916af58cee712597c7ecafb5619bf27a1
+
 interface IAutoSniper {
     function configureMarket(address marketplace, bool status) external;
 
@@ -150,8 +153,8 @@ contract AutoSniperTest is Test {
 
         startHoax(quit);
         IERC20(wethContractAddress).approve(address(sniper), type(uint256).max);
-        Weth(wmaticContractAddress).deposit{value: 2500.06 ether}();
-        Weth(wmaticContractAddress).approve(address(sniper), 2500.06 ether);
+        Weth(wmaticContractAddress).deposit{value: 2550.06 ether}();
+        Weth(wmaticContractAddress).approve(address(sniper), 2550.06 ether);
         vm.stopPrank();
     }
 
@@ -205,7 +208,7 @@ contract AutoSniperTest is Test {
     function testFulfillOrderWethAskWmaticSubsidy() public {
         TokenSubsidy memory subsidy = TokenSubsidy(
             wmaticContractAddress,
-            2500 ether,
+            2550 ether,
             0.06 ether
         );
 

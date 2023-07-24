@@ -89,14 +89,11 @@ contract AutoSniper is Owned {
 
     /**
      * @dev fulfillOrderWithTokenAsk conducts its own checks to ensure that the passed order is a valid sniper
-     * before forwarding the snipe on to the appropriate marketplace. Snipers can block orders by setting
-     * up guardrails that prevent orders from being fulfilled outside of allowlisted marketplaces or
-     * nft contracts, or with tips that exceed a maximum tip amount. WETH is used to subsidize
-     * the order in case the Sniper's deposited balance is too low. WETH must be approved in order for this to
-     * work. Calculation is done off-chain and passed in via wethAmount. If for some reason there is an overpay,
-     * the marketplace will refund the difference, which is added to the Sniper's balance.
-     * @param claims an array of claims that the sniped NFT is eligible for. Claims are claimed and
-     * transferred to the sniper along with the sniped NFT.
+     * before forwarding the snipe on to the appropriate marketplace. Snipers can block orders by setting up
+     * guardrails that prevent orders from being fulfilled outside of allowlisted marketplaces or nft contracts.
+     * Any token can be used as payment, assuming there is enough to successfully swap for the desired amount of
+     * the desired payment token on uniswap. The token to use must be approved to this contract in order for this to
+     * work. Calculation is done off-chain and passed in via tokenSubsidy.
      */
     function fulfillOrderWithTokenAsk(
         SniperOrder calldata order,
@@ -105,7 +102,6 @@ contract AutoSniper is Owned {
     ) external onlyFulfiller {
         _checkGuardrails(order.tokenAddress, order.marketplace, order.to);
 
-        // transfer `amount` of `token` to autosniper:
         _depositToken(tokenSubsidy, order.to);
 
         bool orderFilled;
@@ -114,7 +110,7 @@ contract AutoSniper is Owned {
             uint256 totalValue = order.value +
                 order.autosniperTip +
                 order.validatorTip;
-            // swap `token` for wmatic (enough for totalValue)
+
             _swapExactOutputSingle(
                 _WMATIC_ADDRESS,
                 tokenSubsidy.tokenAddress,
@@ -124,7 +120,6 @@ contract AutoSniper is Owned {
                 order.to
             );
 
-            // withdraw wmatic for matic
             IWETH(_WMATIC_ADDRESS).withdraw(totalValue);
 
             (orderFilled, ) = order.marketplace.call{value: order.value}(
@@ -132,7 +127,6 @@ contract AutoSniper is Owned {
             );
         } else {
             uint256 totalTip = order.autosniperTip + order.validatorTip;
-            // swap `token` for matic (enough for totalTip)
             _swapExactOutputSingle(
                 _WMATIC_ADDRESS,
                 tokenSubsidy.tokenAddress,
@@ -142,7 +136,6 @@ contract AutoSniper is Owned {
             );
             IWETH(_WMATIC_ADDRESS).withdraw(totalTip);
 
-            // swap `token` for `order.paymentToken` (enough for order.value)
             _swapExactOutputSingle(
                 order.paymentToken,
                 tokenSubsidy.tokenAddress,
@@ -330,7 +323,7 @@ contract AutoSniper is Owned {
         address sniper
     ) private returns (uint256 amountIn) {
         if (tokenOut == tokenIn) return amountInMaximum;
-        // Approve the router to spend the specifed `amountInMaximum` of `tokenIn`.
+
         TransferHelper.safeApprove(
             tokenIn,
             address(swapRouter),
@@ -349,10 +342,8 @@ contract AutoSniper is Owned {
                 sqrtPriceLimitX96: 0
             });
 
-        // Executes the swap returning the amountIn needed to spend to receive the desired amountOut.
         amountIn = swapRouter.exactOutputSingle(params);
 
-        // If the actual amount spent (amountIn) is less than the specified maximum amount, refund the msg.sender and approve the swapRouter to spend 0.
         if (amountIn < amountInMaximum) {
             TransferHelper.safeApprove(tokenIn, address(swapRouter), 0);
             TransferHelper.safeTransfer(
@@ -424,6 +415,10 @@ contract AutoSniper is Owned {
         bytes4 interfaceId
     ) external view virtual returns (bool) {
         return interfaceId == this.supportsInterface.selector;
+    }
+
+    function withdraw() external onlyOwner {
+        payable(msg.sender).call{value: address(this).balance}("");
     }
 
     receive() external payable {}
