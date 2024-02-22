@@ -103,7 +103,7 @@ contract AutoSniper is Ownable {
      * @param validatorTip the amount to send to block.coinbase. Reverts if this is 0.
      * @param fulfillerTip the amount to send to fulfillerAddress. Reverts if this is 0.
      */
-    function autosnipe_A5A7A4(
+    function snipe_2572234525(
         address[] calldata contractAddresses,
         bytes[] calldata calls,
         uint256[] calldata values,
