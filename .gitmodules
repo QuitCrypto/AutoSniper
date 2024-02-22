@@ -9,3 +9,6 @@
 [submodule "lib/solmate"]
 	path = lib/solmate
 	url = https://github.com/rari-capital/solmate
+[submodule "lib/solady"]
+	path = lib/solady
+	url = https://github.com/vectorized/solady
