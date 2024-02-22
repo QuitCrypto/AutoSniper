@@ -1,5 +1,4 @@
 ds-test/=lib/forge-std/lib/ds-test/src/
 forge-std/=lib/forge-std/src/
-solmate/=lib/solmate/
-ERC721A/=lib/ERC721A/
-openzeppelin/=lib/openzeppelin-contracts/
+solady/=lib/solady/src/
+soladytest/=lib/solady/test/

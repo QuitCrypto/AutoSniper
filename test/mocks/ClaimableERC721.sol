@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.18;
+pragma solidity 0.8.24;
 
-import "openzeppelin/contracts/token/ERC721/ERC721.sol";
+import {MockERC721, ERC721} from "soladytest/utils/mocks/MockERC721.sol";
 
-contract ClaimableERC721 is ERC721 {
-  constructor() ERC721("MOCK", "MOCK") {}
+contract ClaimableERC721 is MockERC721 {
+    constructor() {}
 
-  address tokenContract;
+    address tokenContract;
 
-  function claim(uint256 tokenId) external {
-    if (IERC721(tokenContract).ownerOf(tokenId) != msg.sender) revert();
+    function claim(uint256 tokenId) external {
+        if (ERC721(tokenContract).ownerOf(tokenId) != msg.sender) revert();
 
-    _mint(msg.sender, tokenId);
-  }
+        _mint(msg.sender, tokenId);
+    }
 
-  function setTokenContract(address _addy) external {
-    tokenContract = _addy;
-  }
+    function setTokenContract(address _addy) external {
+        tokenContract = _addy;
+    }
 }

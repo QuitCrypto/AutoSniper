@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.18;
+pragma solidity 0.8.24;
 
-import "openzeppelin/contracts/token/ERC721/ERC721.sol";
+import {MockERC721} from "soladytest/utils/mocks/MockERC721.sol";
 
-contract MintableERC721 is ERC721 {
-  constructor() ERC721("MOCK", "MOCK") {}
+contract MintableERC721 is MockERC721 {
+    constructor() {}
 
-  function mint(address to) external {
-    _mint(to, 1);
-  }
+    function mint(address to) external {
+        _mint(to, 1);
+    }
 }

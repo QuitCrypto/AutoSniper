@@ -15,6 +15,7 @@ contract Deploy is Script {
     bytes32 salt = 0x0000000000000000000000000000000000000000000000000000050014b4ddd3;
 
     function run() external {
+        console2.logBytes32(keccak256(initCode));
         vm.startBroadcast();
 
         address sniperAddress = factory.safeCreate2(salt, initCode);
