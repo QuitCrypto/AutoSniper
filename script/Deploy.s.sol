@@ -12,7 +12,7 @@ interface ImmutableCreate2Factory {
 contract Deploy is Script {
     ImmutableCreate2Factory immutable factory = ImmutableCreate2Factory(0x0000000000FFe8B47B3e2130213B802212439497);
     bytes initCode = type(AutoSniper).creationCode;
-    bytes32 salt = 0x0000000000000000000000000000000000000000000000000000050014b4ddd3;
+    bytes32 salt = 0xd6309d958328352620b8856c0b08bd64c82244d2b49de99ef3aae416203e5433;
 
     function run() external {
         console2.logBytes32(keccak256(initCode));
