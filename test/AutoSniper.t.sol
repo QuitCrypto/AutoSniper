@@ -11,7 +11,7 @@ import {MaliciousCoinbaseWithdraw} from "./mocks/MaliciousCoinbaseWithdraw.sol";
 import {MaliciousCoinbaseDeposit} from "./mocks/MaliciousCoinbaseDeposit.sol";
 
 interface IAutoSniper {
-    function solSnatch(
+    function autosnipe_A5A7A4(
         address[] calldata contractAddresses,
         bytes[] calldata calls,
         uint256[] calldata values,
@@ -97,17 +97,17 @@ contract AutoSniperTest is Test {
         addresses.push(address(mock721));
         calls.push(abi.encodeWithSelector(ERC721.transferFrom.selector, fulfiller, quit, mockTokenId));
         values.push(0);
-        sniper.solSnatch(addresses, calls, values, quit, coinbaseTip, tip);
+        sniper.autosnipe_A5A7A4(addresses, calls, values, quit, coinbaseTip, tip);
 
         assertEq(mock721.balanceOf(quit), 1);
     }
 
     function testFulfillerModifier() public {
         vm.expectRevert(AutoSniper.CallerNotFulfiller.selector);
-        sniper.solSnatch(addresses, calls, values, quit, coinbaseTip, tip);
+        sniper.autosnipe_A5A7A4(addresses, calls, values, quit, coinbaseTip, tip);
 
         hoax(fulfiller, fulfiller);
-        sniper.solSnatch(addresses, calls, values, quit, coinbaseTip, tip);
+        sniper.autosnipe_A5A7A4(addresses, calls, values, quit, coinbaseTip, tip);
     }
 
     function testFulfillOrder(uint256 value) public {
@@ -123,9 +123,9 @@ contract AutoSniperTest is Test {
         calls.push(abi.encodeWithSelector(ERC721.transferFrom.selector, address(sniper), quit, mockTokenId));
         values.push(0);
 
-        // execute solSnatch
+        // execute autosnipe_A5A7A4
         hoax(fulfiller, fulfiller);
-        sniper.solSnatch(addresses, calls, values, quit, coinbaseTip, tip);
+        sniper.autosnipe_A5A7A4(addresses, calls, values, quit, coinbaseTip, tip);
 
         assertEq(mock721.balanceOf(quit), 1);
     }
@@ -151,9 +151,9 @@ contract AutoSniperTest is Test {
         calls.push(abi.encodeWithSelector(ERC721.transferFrom.selector, address(sniper), quit, mockTokenId));
         values.push(0);
 
-        // execute solSnatch
+        // execute autosnipe_A5A7A4
         hoax(fulfiller, fulfiller);
-        sniper.solSnatch(addresses, calls, values, quit, coinbaseTip, tip);
+        sniper.autosnipe_A5A7A4(addresses, calls, values, quit, coinbaseTip, tip);
 
         assertEq(mock721.balanceOf(quit), 1);
         assertEq(mockClaimable.balanceOf(quit), 1);
@@ -198,13 +198,13 @@ contract AutoSniperTest is Test {
         calls.push(abi.encodeWithSelector(ERC721.transferFrom.selector, address(sniper), quit, mockTokenId));
         values.push(0);
 
-        // execute solSnatch
+        // execute autosnipe_A5A7A4
         hoax(fulfiller, fulfiller);
 
         vm.expectEmit(true, true, true, true, address(sniper));
         emit Deposit(quit, balance - tip - coinbaseTip - mockPrice);
 
-        sniper.solSnatch(addresses, calls, values, quit, coinbaseTip, tip);
+        sniper.autosnipe_A5A7A4(addresses, calls, values, quit, coinbaseTip, tip);
 
         assertEq(weth.balanceOf(quit), 0);
     }
@@ -247,7 +247,7 @@ contract AutoSniperTest is Test {
         values.push(0);
 
         vm.expectRevert(AutoSniper.FailedToPayValidator.selector);
-        sniper.solSnatch(addresses, calls, values, quit, coinbaseTip, tip);
+        sniper.autosnipe_A5A7A4(addresses, calls, values, quit, coinbaseTip, tip);
     }
 
     function testMaliciousCoinbaseAddressDeposit() public {
@@ -270,6 +270,6 @@ contract AutoSniperTest is Test {
         values.push(0);
 
         vm.expectRevert(AutoSniper.FailedToPayValidator.selector);
-        sniper.solSnatch(addresses, calls, values, quit, coinbaseTip, tip);
+        sniper.autosnipe_A5A7A4(addresses, calls, values, quit, coinbaseTip, tip);
     }
 }
