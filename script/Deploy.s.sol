@@ -1,3 +1,5 @@
+// forge script Deploy --fork-url $NETWORK --ledger --mnemonic-derivation-paths "m/44'/60'/2'/0/0" --broadcast
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.17;
 

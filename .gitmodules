@@ -1,6 +1,9 @@
 [submodule "lib/forge-std"]
 	path = lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
+	commit = 1d0766bc5d814f117c7b1e643828f7d85024fb51
 [submodule "lib/solady"]
 	path = lib/solady
 	url = https://github.com/vectorized/solady
+	commit = d3f6104c86e3cc7e3dcbf887043ac3d0d7fdb7ce
+
